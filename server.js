@@ -1,10 +1,12 @@
 /******************************************************
  * server.js
  *
- * Provides OAuth routes to authorize and store tokens
- * for accessing Google Calendar.
- * Defines a /tool-call POST route for your AI (Vapi)
- * to invoke a "scheduleAppointment" function.
+ * 1) Provides OAuth routes to authorize and store tokens
+ *    for accessing Google Calendar.
+ * 2) Defines a /tool-call POST route for your AI (Vapi)
+ *    to invoke a "scheduleAppointment" function.
+ * 3) Adds a sendSMS function to deliver text messages
+ *    via Twilio.
  ******************************************************/
 
 const fs = require('fs');
@@ -13,72 +15,52 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const { google } = require('googleapis');
 
+// -- ADD TWILIO --
+const twilio = require('twilio');
+
+// 1) Twilio credentials: recommended to store in env vars
+const accountSid = process.env.TWILIO_ACCOUNT_SID || 'AC3661b0771f1e1faa2a9ea9532bc698ca';
+const authToken = process.env.TWILIO_AUTH_TOKEN || '[AuthToken]';
+const twilioClient = twilio(accountSid, authToken);
+
 /** 
- * 1) Set Your OAuth2 Credentials 
- *    (Update these with your real values from Google Cloud Console)
+ * Google OAuth Credentials
  */
 const CLIENT_ID = '580600650779-7pkbilqsqc3bjs3d103umpg9h0djomv1.apps.googleusercontent.com';
 const CLIENT_SECRET = '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';
-
-/**
- * 2) Set the Redirect URI
- *    Must match the "Authorized redirect URI" in Google Cloud Console.
- */
 const REDIRECT_URI = 'https://vapifunctions.onrender.com/oauth2callback';
 
-/**
- * 3) Path to store the tokens file on the server.
- *    If your environment is ephemeral (e.g., Render without a persistent disk),
- *    you'll lose this file on each restart or deploy. Plan accordingly.
- */
+// File path for saving tokens
 const TOKEN_PATH = path.join(__dirname, 'token.json');
-
-/**
- * 4) Scopes for Google Calendar Access
- */
 const SCOPES = ['https://www.googleapis.com/auth/calendar'];
 
-/**
- * 5) Express Setup
- */
+// Express setup
 const app = express();
 app.use(bodyParser.json());
-
-/**
- * 6) Port Configuration
- *    Render sets PORT via environment; fallback to 3000 locally.
- */
 const port = process.env.PORT || 3000;
 
 /**
- * Health Check: GET /
+ * Health check
  */
 app.get('/', (req, res) => {
-  res.send('AI Voice Agent Calendar Scheduler is up and running!');
+  res.send('AI Voice Agent Scheduler + SMS is running!');
 });
 
 /**
- * 7) Start OAuth Flow: GET /auth
- *    - Direct user/admin to visit this URL to grant Calendar permissions.
+ * Start OAuth flow
  */
 app.get('/auth', (req, res) => {
   const oAuth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
-
-  // Generate the URL to request access
   const authUrl = oAuth2Client.generateAuthUrl({
-    access_type: 'offline', // offline for refresh token
+    access_type: 'offline',
     scope: SCOPES
   });
-
   console.log('Authorize this app by visiting:', authUrl);
-  // Redirect user to Google's OAuth2 consent screen
   res.redirect(authUrl);
 });
 
 /**
- * 8) OAuth Callback: GET /oauth2callback
- *    - Google redirects here with ?code=xxx after user consents.
- *    - We exchange that code for tokens and store them in token.json.
+ * OAuth callback
  */
 app.get('/oauth2callback', async (req, res) => {
   const code = req.query.code;
@@ -88,12 +70,9 @@ app.get('/oauth2callback', async (req, res) => {
 
   const oAuth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
   try {
-    // Exchange the authorization code for tokens
     const { tokens } = await oAuth2Client.getToken(code);
-    // Save tokens to a file or DB
     fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens));
     console.log('Tokens acquired and saved to', TOKEN_PATH);
-
     res.send('Authentication successful! You can close this tab now.');
   } catch (err) {
     console.error('Error retrieving access token:', err);
@@ -102,24 +81,27 @@ app.get('/oauth2callback', async (req, res) => {
 });
 
 /**
- * 9) The /tool-call Endpoint (POST)
- *    - Your AI (Vapi) will call this to schedule appointments.
+ * MAIN ENDPOINT: /tool-call
  */
 app.post('/tool-call', async (req, res) => {
   try {
     console.log('Incoming /tool-call data:', JSON.stringify(req.body, null, 2));
 
-    // Vapi's function call data is nested under message.functionCall
+    // AI function call data
     const functionCall = req.body?.message?.functionCall || {};
     const functionName = functionCall.name;
     const parameters = functionCall.parameters;
-    // Optionally generate an ID if the AI doesn't provide one
+
+    // Generate an ID if not provided
     const toolCallId = 'auto_' + Date.now();
 
     let resultData;
     switch (functionName) {
       case 'scheduleAppointment':
         resultData = await scheduleAppointment(parameters);
+        break;
+      case 'sendSMS': // NEW CASE
+        resultData = await sendSMSFunction(parameters);
         break;
       default:
         resultData = `No handler for function: ${functionName}`;
@@ -150,44 +132,26 @@ app.post('/tool-call', async (req, res) => {
 });
 
 /**
- * 10) scheduleAppointment Function
- *     - Actually creates the event in Google Calendar.
+ * Function: scheduleAppointment
+ * Creates an event in Google Calendar
  */
 async function scheduleAppointment(params) {
-  /**
-   * Expected shape of params:
-   * {
-   *   "summary": "Some Title",
-   *   "location": "123 Street or phone #",
-   *   "description": "Extra details here",
-   *   "startTime": "2025-02-10T10:00:00",
-   *   "endTime": "2025-02-10T11:00:00"
-   * }
-   */
-
-  // Check if we have stored OAuth tokens
   if (!fs.existsSync(TOKEN_PATH)) {
-    throw new Error('No stored OAuth tokens found. Please visit /auth to authenticate first.');
+    throw new Error('No stored OAuth tokens found. Please visit /auth first.');
   }
 
-  // Load tokens
   const tokens = JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
-
-  // Create an OAuth2 client & set credentials
   const oAuth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
   oAuth2Client.setCredentials(tokens);
 
-  // Initialize Google Calendar
   const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
-
-  // Build the event
   const event = {
     summary: params.summary || 'New Appointment',
     location: params.location || '',
     description: params.description || '',
     start: {
       dateTime: params.startTime,
-      timeZone: 'America/New_York' // Adjust if needed
+      timeZone: 'America/New_York'
     },
     end: {
       dateTime: params.endTime,
@@ -196,7 +160,6 @@ async function scheduleAppointment(params) {
   };
 
   try {
-    // Insert into the primary calendar
     const response = await calendar.events.insert({
       calendarId: 'primary',
       resource: event
@@ -213,8 +176,36 @@ async function scheduleAppointment(params) {
 }
 
 /**
- * 11) Start the Server
+ * Function: sendSMSFunction
+ * Sends an SMS using Twilio
  */
+async function sendSMSFunction(params) {
+  /**
+   * Expected shape of params:
+   * {
+   *   "to": "+12345556789",
+   *   "body": "Hello, thanks for signing up! Here's your link..."
+   * }
+   */
+  const { to, body } = params;
+  if (!to || !body) {
+    throw new Error('Missing SMS "to" or "body" parameter.');
+  }
+
+  try {
+    const message = await twilioClient.messages.create({
+      body: body,
+      from: '+18557442080', // Your Twilio number
+      to: to
+    });
+    return `SMS sent successfully! SID: ${message.sid}`;
+  } catch (err) {
+    console.error('Error sending SMS:', err);
+    throw new Error(`Could not send SMS: ${err.message}`);
+  }
+}
+
+// Start the server
 app.listen(port, () => {
   console.log(`Tools server listening on port ${port}`);
   console.log(`Visit https://vapifunctions.onrender.com/auth to begin OAuth flow in production.`);
