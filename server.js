@@ -20,7 +20,7 @@ const CLIENT_SECRET = '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';
 // IMPORTANT: This must match the "Authorized redirect URI" you set in your
 // Google Cloud Console for the above CLIENT_ID. If you're deploying on Render,
 // set it to: https://<your-app-name>.onrender.com/oauth2callback
-const REDIRECT_URI = 'http://localhost:3000/oauth2callback';
+const REDIRECT_URI = 'https://vapifunctions.onrender.com/oauth2callback';
 
 // The file where we store/refresh the user's tokens.
 // For persistent storage on Render, you may need a persistent disk or store tokens in a DB.
