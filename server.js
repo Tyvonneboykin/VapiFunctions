@@ -18,10 +18,18 @@ const { google } = require('googleapis');
 // -- ADD TWILIO --
 const twilio = require('twilio');
 
-// 1) Twilio credentials: recommended to store in env vars
+
+// Twilio Credentials from Environment Variables
+// Replace the fallback strings ('ACxxxxx', '[AuthToken]') if you'd like a non-env fallback, 
+// but ideally you rely solely on process.env for security.
 const accountSid = process.env.TWILIO_ACCOUNT_SID || 'AC3661b0771f1e1faa2a9ea9532bc698ca';
-const authToken = process.env.TWILIO_AUTH_TOKEN || '[AuthToken]';
-const twilioClient = twilio(accountSid, authToken);
+const authToken  = process.env.TWILIO_AUTH_TOKEN  || '5c027f6f6eda7b1fb41b4c7418edbc80'; 
+
+const twilioClient = require('twilio')(accountSid, authToken);
+
+// Export the client if needed in other modules
+module.exports = twilioClient;
+
 
 /** 
  * Google OAuth Credentials
