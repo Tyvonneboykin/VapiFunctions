@@ -1,10 +1,10 @@
 /******************************************************
  * server.js
- * 
- * 1) Provides OAuth routes to authorize and store tokens 
+ *
+ * 1) Provides OAuth routes to authorize and store tokens
  *    so we can access Google Calendar.
- * 2) Defines a /tool-call POST route for your AI (Vapi) 
- *    to invoke a "schedule_appointment" function.
+ * 2) Defines a /tool-call POST route for your AI (Vapi)
+ *    to invoke a "scheduleAppointment" function.
  ******************************************************/
 
 const fs = require('fs');
@@ -17,12 +17,12 @@ const { google } = require('googleapis');
 const CLIENT_ID = '580600650779-7pkbilqsqc3bjs3d103umpg9h0djomv1.apps.googleusercontent.com';
 const CLIENT_SECRET = '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';
 
-// IMPORTANT: This must match the "Authorized redirect URI" you set in your 
-// Google Cloud Console for the above CLIENT_ID. If you're deploying on Render, 
+// IMPORTANT: This must match the "Authorized redirect URI" you set in your
+// Google Cloud Console for the above CLIENT_ID. If you're deploying on Render,
 // set it to: https://<your-app-name>.onrender.com/oauth2callback
-const REDIRECT_URI = 'http://localhost:3000/oauth2callback'; 
+const REDIRECT_URI = 'http://localhost:3000/oauth2callback';
 
-// The file where we store/refresh the user's tokens. 
+// The file where we store/refresh the user's tokens.
 // For persistent storage on Render, you may need a persistent disk or store tokens in a DB.
 const TOKEN_PATH = path.join(__dirname, 'token.json');
 
@@ -88,24 +88,32 @@ app.get('/oauth2callback', async (req, res) => {
 });
 
 //============================================================
-// 4) The /tool-call endpoint for your Vapi (AI) calls
+// 4) The /tool-call endpoint for your AI (Vapi) calls
 //============================================================
 app.post('/tool-call', async (req, res) => {
   try {
-    console.log('Incoming /tool-call data:', req.body);
+    console.log('Incoming /tool-call data:', JSON.stringify(req.body, null, 2));
 
-    const { toolCallId, function: functionData, parameters } = req.body;
+    // The AI's function call data is now nested under message.functionCall
+    const functionCall = req.body?.message?.functionCall || {};
+    const functionName = functionCall.name;
+    const parameters = functionCall.parameters;
+
+    // If you need a unique ID, generate one (the AI might not provide one)
+    const toolCallId = 'auto_' + Date.now();
 
     let resultData;
-    switch (functionData?.name) {
-      case 'schedule_appointment':
+    switch (functionName) {
+      case 'scheduleAppointment':
+        // Call our scheduling function with the parameters
         resultData = await scheduleAppointment(parameters);
         break;
       default:
-        resultData = `No handler for function: ${functionData?.name}`;
+        // If no recognized function name
+        resultData = `No handler for function: ${functionName}`;
     }
 
-    // Respond in the Vapi-expected format
+    // Respond in the (Vapi) expected format
     const responsePayload = {
       results: [
         {
@@ -121,7 +129,7 @@ app.post('/tool-call', async (req, res) => {
     return res.status(500).json({
       results: [
         {
-          toolCallId: req.body?.toolCallId || null,
+          toolCallId: null,
           result: `Error: ${error.message}`
         }
       ]
@@ -135,7 +143,7 @@ app.post('/tool-call', async (req, res) => {
 //============================================================
 async function scheduleAppointment(params) {
   /*
-    Example shape of params:
+    Example shape of params (from AI):
     {
       "summary": "Dentist Appointment",
       "location": "1234 Example St.",
