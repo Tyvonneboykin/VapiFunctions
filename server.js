@@ -185,31 +185,160 @@ async function scheduleAppointment(params) {
 
 /**
  * Function: sendSMSFunction
- * Sends an SMS using Twilio
+ * Sends an SMS using Twilio with optional calendar integration
  */
 async function sendSMSFunction(params) {
-  /**
-   * Expected shape of params:
-   * {
-   *   "to": "+12345556789",
-   *   "body": "Hello, thanks for signing up! Here's your link..."
-   * }
-   */
-  const { to, body } = params;
-  if (!to || !body) {
-    throw new Error('Missing SMS "to" or "body" parameter.');
+  const { to, body, customerName, appointmentType, selectedDate, selectedTime, propertyAddress } = params;
+  
+  if (!to) {
+    throw new Error('Missing SMS "to" parameter.');
   }
 
   try {
+    let messageBody;
+    
+    // Check if this is an appointment confirmation (new format) or simple SMS (old format)
+    if (customerName && appointmentType && selectedDate && selectedTime) {
+      // New format - create appointment confirmation with calendar link
+      const calendarLink = createAddToCalendarLink({
+        title: `Green Glow Gardens - ${appointmentType}`,
+        description: `${appointmentType} appointment with Green Glow Gardens. Our professional will arrive 15 minutes early to survey your property.`,
+        location: propertyAddress || 'Customer Property',
+        startDate: selectedDate,
+        startTime: selectedTime
+      });
+
+      messageBody = `Green Glow Gardens Confirmation!
+
+Hi ${customerName}! Your ${appointmentType} is confirmed for ${selectedDate} at ${selectedTime}.
+
+Our team arrives 15 min early to survey your property.
+
+Add to Calendar: ${calendarLink}
+
+Questions? Call us anytime!
+- Jane at Green Glow Gardens`;
+    } else if (body) {
+      // Old format - just send the message as-is
+      messageBody = body;
+    } else {
+      throw new Error('Missing SMS parameters. Need either "body" or appointment details.');
+    }
+
     const message = await twilioClient.messages.create({
-      body: body,
+      body: messageBody,
       from: '+18557442080', // Your Twilio number
       to: to
     });
-    return `SMS sent successfully! SID: ${message.sid}`;
+    
+    if (customerName) {
+      return `Appointment SMS sent to ${customerName}! SID: ${message.sid}`;
+    } else {
+      return `SMS sent successfully! SID: ${message.sid}`;
+    }
   } catch (err) {
     console.error('Error sending SMS:', err);
     throw new Error(`Could not send SMS: ${err.message}`);
+  }
+}
+
+/**
+ * Helper function to create "Add to Calendar" link for Google Calendar
+ */
+function createAddToCalendarLink({ title, description, location, startDate, startTime }) {
+  try {
+    // Convert date/time to the format needed for Google Calendar
+    const dateTimeString = convertToCalendarDateTime(startDate, startTime);
+    const endDateTime = addOneHour(dateTimeString);
+    
+    const params = new URLSearchParams({
+      action: 'TEMPLATE',
+      text: title,
+      dates: `${dateTimeString}/${endDateTime}`,
+      details: description,
+      location: location || '',
+      trp: 'false'
+    });
+
+    return `https://calendar.google.com/calendar/render?${params.toString()}`;
+  } catch (error) {
+    console.error('Error creating calendar link:', error);
+    return 'https://calendar.google.com/calendar'; // Fallback to basic calendar
+  }
+}
+
+/**
+ * Helper function to convert date/time to Google Calendar format (YYYYMMDDTHHMMSSZ)
+ */
+function convertToCalendarDateTime(date, time) {
+  try {
+    // Handle various date formats
+    let dateStr = date;
+    let timeStr = time;
+    
+    // Clean up the date string
+    if (typeof dateStr === 'string') {
+      dateStr = dateStr.replace(/,/g, '').trim();
+    }
+    
+    // Parse the date and time
+    const dateTimeStr = `${dateStr} ${timeStr}`;
+    const dateObj = new Date(dateTimeStr);
+    
+    // Check if date is valid
+    if (isNaN(dateObj.getTime())) {
+      throw new Error('Invalid date/time format');
+    }
+    
+    // Convert to local time format for Google Calendar (no timezone conversion)
+    const year = dateObj.getFullYear();
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    const hours = String(dateObj.getHours()).padStart(2, '0');
+    const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+    
+    return `${year}${month}${day}T${hours}${minutes}00`;
+  } catch (error) {
+    console.error('Error converting date/time:', error);
+    
+    // Fallback to tomorrow at 2 PM
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(14, 0, 0, 0);
+    
+    const year = tomorrow.getFullYear();
+    const month = String(tomorrow.getMonth() + 1).padStart(2, '0');
+    const day = String(tomorrow.getDate()).padStart(2, '0');
+    
+    return `${year}${month}${day}T140000`;
+  }
+}
+
+/**
+ * Helper function to add one hour to a datetime string
+ */
+function addOneHour(dateTimeString) {
+  try {
+    const year = parseInt(dateTimeString.substring(0, 4));
+    const month = parseInt(dateTimeString.substring(4, 6)) - 1; // Month is 0-indexed
+    const day = parseInt(dateTimeString.substring(6, 8));
+    const hour = parseInt(dateTimeString.substring(9, 11));
+    const minute = parseInt(dateTimeString.substring(11, 13));
+    
+    const date = new Date(year, month, day, hour, minute);
+    date.setHours(date.getHours() + 1);
+    
+    const newYear = date.getFullYear();
+    const newMonth = String(date.getMonth() + 1).padStart(2, '0');
+    const newDay = String(date.getDate()).padStart(2, '0');
+    const newHour = String(date.getHours()).padStart(2, '0');
+    const newMinute = String(date.getMinutes()).padStart(2, '0');
+    
+    return `${newYear}${newMonth}${newDay}T${newHour}${newMinute}00`;
+  } catch (error) {
+    console.error('Error adding one hour:', error);
+    // Fallback: return the original string
+    return dateTimeString;
   }
 }
 
