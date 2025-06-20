@@ -225,16 +225,51 @@ Questions? Call us anytime!
       throw new Error('Missing SMS parameters. Need either "body" or appointment details.');
     }
 
-    const message = await twilioClient.messages.create({
+    // Send SMS to customer
+    const customerMessage = await twilioClient.messages.create({
       body: messageBody,
       from: '+18557442080', // Your Twilio number
       to: to
     });
     
+    let ownerMessage = null;
+    
+    // If this is an appointment confirmation, also notify the business owner
+    if (customerName && appointmentType && selectedDate && selectedTime) {
+      const ownerMessageBody = `New Appointment Scheduled!
+
+Customer: ${customerName}
+Service: ${appointmentType}
+Date: ${selectedDate} at ${selectedTime}
+Address: ${propertyAddress || 'Customer Property'}
+
+Add to Calendar: ${createAddToCalendarLink({
+        title: `Green Glow Gardens - ${appointmentType}`,
+        description: `${appointmentType} appointment with Green Glow Gardens. Customer: ${customerName}. Address: ${propertyAddress || 'Customer Property'}`,
+        location: propertyAddress || 'Customer Property',
+        startDate: selectedDate,
+        startTime: selectedTime
+      })}
+
+- Green Glow Gardens Scheduling System`;
+
+      try {
+        ownerMessage = await twilioClient.messages.create({
+          body: ownerMessageBody,
+          from: '+18557442080',
+          to: '+19736661635' // Business owner's phone number
+        });
+      } catch (ownerErr) {
+        console.error('Error sending owner notification SMS:', ownerErr);
+        // Don't fail the whole operation if owner SMS fails
+      }
+    }
+    
     if (customerName) {
-      return `Appointment SMS sent to ${customerName}! SID: ${message.sid}`;
+      const ownerStatus = ownerMessage ? ` Owner notified: ${ownerMessage.sid}` : ' (Owner notification failed)';
+      return `Appointment SMS sent to ${customerName}! Customer SID: ${customerMessage.sid}.${ownerStatus}`;
     } else {
-      return `SMS sent successfully! SID: ${message.sid}`;
+      return `SMS sent successfully! SID: ${customerMessage.sid}`;
     }
   } catch (err) {
     console.error('Error sending SMS:', err);
