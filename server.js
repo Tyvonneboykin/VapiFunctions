@@ -436,6 +436,9 @@ app.post('/tool-call', async (req, res) => {
       case 'createPaymentLink': // NEW: Jane assistant payment link generation
         resultData = await createPaymentLinkFunction(parameters);
         break;
+      case 'sendPricingPage': // NEW: Send pricing page link with recommendation
+        resultData = await sendPricingPageFunction(parameters);
+        break;
       case 'summarizeClientCall': // NEW: Summarize client conversation
         resultData = await summarizeClientCallFunction(parameters);
         break;
@@ -706,6 +709,79 @@ function addOneHour(dateTimeString) {
 }
 
 /**
+ * Function: sendPricingPageFunction
+ * Sends pricing page link with personalized recommendation via SMS
+ */
+async function sendPricingPageFunction(params) {
+  try {
+    const { clientName, clientPhone, businessSize, recommendedTier, notes } = params;
+    
+    if (!clientName || !recommendedTier) {
+      throw new Error('Missing required parameters: clientName, recommendedTier');
+    }
+    
+    // Create personalized pricing page message
+    let tierDescription = '';
+    let pricing = '';
+    
+    switch(recommendedTier.toLowerCase()) {
+      case 'starter':
+        tierDescription = 'Jane Starter ($49/month) - Perfect for small businesses getting started with AI sales automation';
+        pricing = '$49/month with immediate activation';
+        break;
+      case 'pro':
+        tierDescription = 'Jane Pro ($299/month + $19.99 setup) - Ideal for growing businesses with advanced automation needs';
+        pricing = '$299/month + $19.99 setup fee, includes 7-day free trial';
+        break;
+      case 'enterprise':
+        tierDescription = 'Jane Enterprise ($1,000/month + $99 setup) - For large organizations with complex sales processes';
+        pricing = '$1,000/month + $99 setup fee, includes 7-day free trial';
+        break;
+      default:
+        tierDescription = 'Our AI sales automation plans';
+        pricing = 'Starting at $49/month';
+    }
+    
+    const message = `Hi ${clientName}! Based on our conversation, I recommend ${tierDescription}.
+
+View all plans and start your free trial:
+https://www.vonbase.com/plans-pricing
+
+${pricing}
+
+${notes ? `\nPersonalized note: ${notes}` : ''}
+
+Questions? Just reply to this message!
+
+- Jane at Von Base Enterprises`;
+    
+    // Send SMS via Twilio
+    if (clientPhone) {
+      try {
+        const smsMessage = await twilioClient.messages.create({
+          body: message,
+          from: '+18557442080',
+          to: clientPhone
+        });
+        
+        console.log(`Pricing page SMS sent to ${clientName}: ${smsMessage.sid}`);
+        return `Pricing page sent to ${clientName} at ${clientPhone}. Recommended: ${recommendedTier}. SMS SID: ${smsMessage.sid}`;
+        
+      } catch (smsError) {
+        console.error('Error sending pricing page SMS:', smsError);
+        return `Pricing page recommendation created for ${clientName} (${recommendedTier}), but SMS delivery failed: ${smsError.message}`;
+      }
+    }
+    
+    return `Pricing page recommendation created for ${clientName}: ${recommendedTier} tier`;
+    
+  } catch (error) {
+    console.error('Error in sendPricingPageFunction:', error);
+    throw new Error(`Could not send pricing page: ${error.message}`);
+  }
+}
+
+/**
  * Function: createPaymentLinkFunction
  * Creates payment link for client onboarding (called by Jane assistant)
  */
@@ -752,15 +828,16 @@ async function createPaymentLinkFunction(params) {
  */
 async function summarizeClientCallFunction(params) {
   try {
-    const { clientName, businessName, businessType, services, budget, timeline, notes } = params;
+    const { clientName, businessName, businessType, salesChallenges, currentCRM, teamSize, recommendedTier, notes } = params;
     
     const summary = {
       clientName: clientName || 'Unknown',
       businessName: businessName || clientName + "'s Business",
       businessType: businessType || 'general',
-      services: services || [],
-      budget: budget || 'not specified',
-      timeline: timeline || 'flexible',
+      salesChallenges: salesChallenges || [],
+      currentCRM: currentCRM || 'none specified',
+      teamSize: teamSize || 'not specified',
+      recommendedTier: recommendedTier || 'to be determined',
       notes: notes || '',
       summarizedAt: new Date().toISOString()
     };
@@ -777,7 +854,7 @@ async function summarizeClientCallFunction(params) {
     summaries[summaryId] = summary;
     fs.writeFileSync(summariesPath, JSON.stringify(summaries, null, 2));
     
-    return `Call summary created for ${clientName}. Summary ID: ${summaryId}. Business: ${businessName}, Type: ${businessType}`;
+    return `Call summary created for ${clientName}. Summary ID: ${summaryId}. Business: ${businessName}, Recommended: ${recommendedTier}, CRM: ${currentCRM}`;
     
   } catch (error) {
     console.error('Error in summarizeClientCallFunction:', error);
